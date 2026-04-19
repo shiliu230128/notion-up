@@ -1,0 +1,249 @@
+# .github/workflows/notion-api-weekly-backup.yml
+name: Notion API每周备份
+
+on:
+  schedule:
+    # 每周六凌晨3点执行 (UTC时间)
+    - cron: '0 3 * * 6'
+  workflow_dispatch: # 允许手动触发
+
+jobs:
+  notion-api-backup:
+    runs-on: ubuntu-latest
+    
+    steps:
+      # 1. 检出代码
+      - name: 检出仓库
+        uses: actions/checkout@v3
+      
+      # 2. 设置Python环境
+      - name: 设置Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+      
+      # 3. 安装依赖
+      - name: 安装依赖
+        run: |
+          pip install requests beautifulsoup4
+          
+      # 4. 创建备份目录
+      - name: 创建备份目录
+        run: mkdir -p backups
+      
+      # 5. 运行API备份脚本
+      - name: 执行Notion API备份
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+        run: |
+          python -c "
+          import os
+          import json
+          import requests
+          from datetime import datetime
+          import logging
+          
+          # 配置日志
+          logging.basicConfig(level=logging.INFO)
+          
+          class NotionAPIBackup:
+              def __init__(self, token, database_id):
+                  self.token = token
+                  self.database_id = database_id
+                  self.headers = {
+                      'Authorization': f'Bearer {token}',
+                      'Content-Type': 'application/json',
+                      'Notion-Version': '2022-06-28'
+                  }
+                  self.backup_dir = 'backups'
+                  os.makedirs(self.backup_dir, exist_ok=True)
+          
+              def get_database_content(self):
+                  '''获取数据库内容'''
+                  print(f'正在获取数据库内容: {self.database_id[:8]}...')
+                  
+                  url = f'https://api.notion.com/v1/databases/{self.database_id}/query'
+                  payload = {'page_size': 100}
+                  
+                  results = []
+                  has_more = True
+                  start_cursor = None
+                  
+                  while has_more:
+                      if start_cursor:
+                          payload['start_cursor'] = start_cursor
+                      
+                      response = requests.post(url, headers=self.headers, json=payload)
+                      
+                      if response.status_code == 200:
+                          data = response.json()
+                          results.extend(data.get('results', []))
+                          
+                          has_more = data.get('has_more', False)
+                          start_cursor = data.get('next_cursor')
+                          
+                          print(f'已获取 {len(results)} 条记录...')
+                      else:
+                          print(f'API请求失败: {response.status_code}, {response.text}')
+                          return None
+                  
+                  print(f'总共获取到 {len(results)} 条记录')
+                  return {'results': results, 'total_count': len(results)}
+          
+              def convert_to_html(self, data):
+                  '''将数据转换为HTML格式'''
+                  html_content = '''
+                  <!DOCTYPE html>
+                  <html>
+                  <head>
+                      <meta charset='UTF-8'>
+                      <title>Notion数据备份</title>
+                      <style>
+                          body { font-family: Arial, sans-serif; margin: 20px; }
+                          table { border-collapse: collapse; width: 100%; }
+                          th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+                          th { background-color: #f2f2f2; }
+                          .property { margin-bottom: 10px; }
+                          .title { font-size: 1.5em; font-weight: bold; margin-bottom: 20px; }
+                      </style>
+                  </head>
+                  <body>
+                  '''
+                  
+                  html_content += f'<h1>Notion数据备份</h1>'
+                  html_content += f'<p>备份时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}</p>'
+                  html_content += f'<p>数据库ID: {self.database_id}</p>'
+                  html_content += f'<p>总记录数: {data.get(\"total_count\", 0)}</p>'
+                  
+                  if data['results']:
+                      # 获取所有可能的属性名
+                      all_properties = set()
+                      for item in data['results']:
+                          all_properties.update(item['properties'].keys())
+                      property_names = sorted(list(all_properties))
+                      
+                      html_content += '<table><thead><tr>'
+                      for prop_name in property_names:
+                          html_content += f'<th>{prop_name}</th>'
+                      html_content += '</tr></thead><tbody>'
+                      
+                      for item in data['results']:
+                          html_content += '<tr>'
+                          for prop_name in property_names:
+                              prop_value = item['properties'].get(prop_name, {})
+                              display_value = self.format_property_value(prop_value)
+                              html_content += f'<td>{display_value}</td>'
+                          html_content += '</tr>'
+                      
+                      html_content += '</tbody></table>'
+                  else:
+                      html_content += '<p>暂无数据</p>'
+                  
+                  html_content += '</body></html>'
+                  return html_content
+          
+              def format_property_value(self, prop):
+                  '''格式化属性值'''
+                  prop_type = prop.get('type')
+                  prop_value = prop.get(prop_type, {})
+                  
+                  if prop_type == 'title':
+                      return ''.join([t.get('plain_text', '') for t in prop_value]) or ''
+                  elif prop_type == 'rich_text':
+                      return ''.join([t.get('plain_text', '') for t in prop_value]) or ''
+                  elif prop_type == 'number':
+                      return str(prop_value) if prop_value is not None else ''
+                  elif prop_type == 'select':
+                      return prop_value.get('name', '') if prop_value else ''
+                  elif prop_type == 'multi_select':
+                      return ', '.join([s.get('name', '') for s in prop_value])
+                  elif prop_type == 'date':
+                      date_obj = prop_value.get('start')
+                      return date_obj if date_obj else ''
+                  elif prop_type == 'people':
+                      return ', '.join([p.get('name', '') for p in prop_value])
+                  elif prop_type == 'files':
+                      return ', '.join([f.get('name', '') for f in prop_value])
+                  elif prop_type == 'checkbox':
+                      return '✓' if prop_value else '✗'
+                  elif prop_type == 'url':
+                      return prop_value if prop_value else ''
+                  elif prop_type == 'email':
+                      return prop_value if prop_value else ''
+                  elif prop_type == 'phone_number':
+                      return prop_value if prop_value else ''
+                  elif prop_type == 'formula':
+                      return str(prop_value.get('string', '')) if isinstance(prop_value, dict) else str(prop_value)
+                  elif prop_type == 'relation':
+                      return f"{len(prop_value)} relations"
+                  elif prop_type == 'rollup':
+                      return str(prop_value)
+                  else:
+                      return str(prop_value)
+          
+              def save_backup(self, data):
+                  '''保存备份文件'''
+                  timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                  
+                  # 保存原始JSON数据
+                  json_filename = f'{self.backup_dir}/notion_backup_{timestamp}.json'
+                  with open(json_filename, 'w', encoding='utf-8') as f:
+                      json.dump(data, f, ensure_ascii=False, indent=2)
+                  
+                  # 保存HTML格式
+                  html_content = self.convert_to_html(data)
+                  html_filename = f'{self.backup_dir}/notion_backup_{timestamp}.html'
+                  with open(html_filename, 'w', encoding='utf-8') as f:
+                      f.write(html_content)
+                  
+                  print(f'备份已保存: {json_filename}, {html_filename}')
+                  return [json_filename, html_filename]
+          
+              def run_backup(self):
+                  '''执行备份流程'''
+                  print('开始Notion API备份...')
+                  
+                  # 获取数据
+                  data = self.get_database_content()
+                  if not data:
+                      print('获取数据失败')
+                      return False
+                  
+                  # 保存备份
+                  filenames = self.save_backup(data)
+                  
+                  print('备份完成！')
+                  return filenames
+          
+          # 主程序
+          token = os.getenv('NOTION_TOKEN')
+          database_id = os.getenv('NOTION_DATABASE_ID')
+          
+          if not token or not database_id:
+              print('错误：请设置NOTION_TOKEN和NOTION_DATABASE_ID环境变量')
+              exit(1)
+          
+          backup = NotionAPIBackup(token, database_id)
+          result = backup.run_backup()
+          
+          if result:
+              print(f'备份成功: {result}')
+          else:
+              print('备份失败')
+              exit(1)
+          "
+      
+      # 6. 提交备份文件
+      - name: 提交备份文件
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add backups/
+          if ! git diff --cached --quiet; then
+            git commit -m "Weekly Notion API backup $(date)"
+            git push
+          else
+            echo "No changes to commit"
+          fi
+        continue-on-error: true
