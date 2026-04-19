@@ -11,15 +11,15 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      # 1. 检出代码
+      # 1. 检出代码 - 已更新到 v4
       - name: 检出仓库
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       
-      # 2. 设置Python环境
+      # 2. 设置Python环境 - 已更新到 v5
       - name: 设置Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.9'
+          python-version: '3.11' # 同时也升级了Python版本到更稳定的3.11
       
       # 3. 安装依赖
       - name: 安装依赖
@@ -102,9 +102,9 @@ jobs:
                   '''
                   
                   html_content += f'<h1>Notion数据备份</h1>'
-                  html_content += f'<p>备份时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>'
+                  html_content += f'<p>备份时间: {datetime.now().strftime(\"%Y-%m-%d %H:%M:%S\")}</p>'
                   html_content += f'<p>数据库ID: {self.database_id}</p>'
-                  html_content += f'<p>总记录数: {data.get('total_count', 0)}</p>'
+                  html_content += f'<p>总记录数: {data.get(\"total_count\", 0)}</p>'
                   
                   if data['results']:
                       all_properties = set()
@@ -218,7 +218,7 @@ jobs:
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add backups/
-          if ! git.diff --cached --quiet; then
+          if ! git diff --cached --quiet; then
             git commit -m "Weekly Notion API backup $(date)"
             git push
           else
